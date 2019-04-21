@@ -4,7 +4,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import os
-os.chdir('/Users/tamasdinh/Dropbox/Data-Science_suli/0_NOTES/Deep_Learning/RNNs/3_Implementation+of+RNN+&+LSTM+[new]+Videos')
+from datetime import datetime as dt
+os.chdir('/Users/tamasdinh/Dropbox/Data-Science_suli/0_NOTES/Case_studies/15_Character-level-RNN')
 
 #%%
 with open('./data/anna.txt') as f:
@@ -227,5 +228,16 @@ seq_length = 100
 n_epochs = 2
 
 train(net, encoded, epochs=n_epochs, batch_size=batch_size, seq_length=seq_length, lr=0.001, print_every=10)
+
+#%%
+model_name = 'textgen-char-rnn_{}_{}.net'.format(dt.today().date(), int(dt.today().timestamp()))
+
+checkpoint = {'n_hidden': net.n_hidden,
+              'n_layers': net.n_layers,
+              'state_dict': net.state_dict(),
+              'tokens': net.chars}
+
+with open(f'./{model_name}', 'wb') as f:
+    torch.save(checkpoint, f)
 
 #%%
