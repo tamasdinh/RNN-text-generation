@@ -56,7 +56,11 @@ def get_batches(arr, batch_size, seq_length):
 
     for n in range(0, arr.shape[1], seq_length):
         x = arr[:, n:n+seq_length]
-        y = arr[:, n+1:n+1+seq_length]
+        y = np.zeros_like(x)  # this is to avoid y going over the boundaries of arr at the last batch
+        try:
+            y[:, :-1], y[:, -1] = x[:, 1:], arr[:, n+seq_length]
+        except IndexError:
+            y[:, :-1], y[:, -1] = x[:, 1:], arr[:, 0]
         yield x, y
 
 
@@ -88,8 +92,8 @@ class CharRNN(nn.Module):
         self.int2char = dict(enumerate(self.chars))
         self.char2int = {char: ii for ii, char in self.int2char.items()}
 
-        self.lstm = nn.LSTM(input_size=len(self.chars), n_hidden=self.n_hidden,
-                            n_layers=self.n_layers, dropout=self.drop_prob, batch_first=True)
+        self.lstm = nn.LSTM(len(self.chars), self.n_hidden,
+                            self.n_layers, dropout=self.drop_prob, batch_first=True)
         # here dropout automatically creates dropout layer between LSTM cells
 
         self.dropout = nn.Dropout(p=self.drop_prob)  # we need this for dropout bw LSTM and final FC layer
@@ -105,7 +109,7 @@ class CharRNN(nn.Module):
         """
         lstm_out, hidden_state = self.lstm(x, hidden)
         out = self.dropout(lstm_out)
-        out = out.view(-1, self.n_hidden)
+        out = out.contiguous().view(-1, self.n_hidden)
         out = self.fc(out)
         return out, hidden_state
 
@@ -119,10 +123,10 @@ class CharRNN(nn.Module):
 
         if train_on_gpu:
             hidden = (weight.new(self.n_layers, batch_size, self.n_hidden).zero_().cuda(),
-                      weight.new(self.n_layers, batch_size, self.n_hidden.zero_().cuda()))
+                      weight.new(self.n_layers, batch_size, self.n_hidden).zero_().cuda())
         else:
             hidden = (weight.new(self.n_layers, batch_size, self.n_hidden).zero_(),
-                      weight.new(self.n_layers, batch_size, self.n_hidden.zero_()))
+                      weight.new(self.n_layers, batch_size, self.n_hidden).zero_())
 
         return hidden
 
@@ -163,4 +167,65 @@ def train(net, data, epochs=10, batch_size=10, seq_length=50, lr=0.001, clip=5, 
         for x, y in get_batches(data, batch_size, seq_length):
             counter += 1
 
-            x = one_hot_encoding()
+            x = one_hot_encoding(x, n_chars)
+            inputs, targets = torch.from_numpy(x), torch.from_numpy(y)
+
+            if train_on_gpu:
+                inputs, targets = inputs.cuda(), targets.cuda()
+
+            h = tuple([each.data for each in h])
+
+            net.zero_grad()
+
+            output, h = net(inputs, h)
+
+            loss = criterion(output, targets.contiguous().view(batch_size*seq_length))
+            loss.backward()
+
+            nn.utils.clip_grad_norm_(net.parameters(), clip)
+
+            opt.step()
+
+            if counter % print_every == 0:
+                val_h = net.init_hidden(batch_size)
+                val_losses = []
+                net.eval()
+                for x, y in get_batches(val_data, batch_size, seq_length):
+                    x = one_hot_encoding(x, n_chars)
+                    x, y = torch.from_numpy(x), torch.from_numpy(y)
+
+                    val_h = tuple([each.data for each in val_h])
+
+                    inputs, targets = x, y
+                    if train_on_gpu:
+                        inputs, targets = inputs.cuda(), targets.cuda()
+
+                    output, val_h = net(inputs, val_h)
+
+                    val_loss = criterion(output, targets.contiguous().view(batch_size*seq_length))
+
+                    val_losses.append(val_loss.item())
+
+                net.train()
+
+                print('Epoch: {}/{}...'.format(e+1, epochs),
+                      'Step: {}...'.format(counter),
+                      'Loss: {:.4f}...'.format(loss.item()),
+                      'Val loss: {:.4f}...'.format(np.mean(val_losses)))
+
+
+#%%
+n_hidden = 512
+n_layers = 2
+
+net = CharRNN(tokens=chars, n_hidden=n_hidden, n_layers=n_layers)
+print(net)
+
+#%%
+batch_size = 128
+seq_length = 100
+n_epochs = 2
+
+train(net, encoded, epochs=n_epochs, batch_size=batch_size, seq_length=seq_length, lr=0.001, print_every=10)
+
+#%%
