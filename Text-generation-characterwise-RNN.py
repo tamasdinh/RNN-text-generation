@@ -5,10 +5,9 @@ from torch import nn
 import torch.nn.functional as F
 import os
 from datetime import datetime as dt
-os.chdir('/Users/tamasdinh/Dropbox/Data-Science_suli/0_NOTES/Case_studies/15_Character-level-RNN')
 
 #%%
-with open('./data/anna.txt') as f:
+with open(os.getcwd() + '/data/anna.txt') as f:
     text = f.read()
 
 #%%
@@ -221,6 +220,8 @@ n_layers = 2
 
 net = CharRNN(tokens=chars, n_hidden=n_hidden, n_layers=n_layers)
 print(net)
+for i in net.named_parameters():
+    print(i)
 
 #%%
 batch_size = 128
@@ -240,4 +241,81 @@ checkpoint = {'n_hidden': net.n_hidden,
 with open(f'./{model_name}', 'wb') as f:
     torch.save(checkpoint, f)
 
+
 #%%
+def predict(net, char, h=None, top_k=None):
+    """
+    Implements the prediction procedure for the character-level RNN
+    :param net: trained RNN for character-level prediction
+    :param char: character for which to predict the next character
+    :param h:
+    :param top_k:
+    :return:
+    """
+
+    # tensor inputs
+    x = np.array([[net.char2int[char]]])
+    x = one_hot_encoding(x, len(net.chars))
+    inputs = torch.from_numpy(x)
+
+    if train_on_gpu:
+        inputs = inputs.cuda()
+
+    # detach hidden state from history
+    h = tuple([each.data for each in h])
+
+    out, h = net(inputs, h)
+
+    # get character probs
+    p = F.softmax(out, dim=1).data
+    if train_on_gpu:
+        p = p.cpu()  # we're transferring p to CPU for further calculations
+
+    # get top k characters
+    if top_k is None:
+        top_ch = np.arange(len(net.chars))
+    else:
+        p, top_ch = p.topk(top_k)
+        top_ch = top_ch.numpy().squeeze()
+
+    p = p.numpy().squeeze()
+    char = np.random.choice(top_ch, p=p/p.sum())
+
+    return net.int2char[char], h
+
+
+#%%
+def sample(net, size, prime='The', top_k=None):
+
+    if train_on_gpu:
+        net.cuda()
+    else:
+        net.cpu()
+
+    net.eval()
+
+    chars = [ch for ch in prime]
+    h = net.init_hidden(1)
+
+    for ch in prime:
+        char, h = predict(net, ch, h, top_k=top_k)
+
+    chars.append(char)
+
+    for ii in range(size):
+        char, h = predict(net, chars[-1], h, top_k=top_k)
+        chars.append(char)
+
+    return ''.join(chars)
+
+
+#%%
+# load checkpoint from saved model
+with open(os.getcwd() + '/rnn_20_epoch.net', 'rb') as f:
+    checkpoint = torch.load(f, map_location='cpu')
+
+loaded = CharRNN(checkpoint['tokens'], n_hidden=checkpoint['n_hidden'], n_layers=checkpoint['n_layers'])
+loaded.load_state_dict(checkpoint['state_dict'])
+
+#%%
+print(sample(loaded, 2000, top_k=5, prime='And Levin said'))
